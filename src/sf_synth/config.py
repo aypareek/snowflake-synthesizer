@@ -65,24 +65,24 @@ class ColumnConfig(BaseModel):
     @model_validator(mode="after")
     def validate_generator_params(self) -> "ColumnConfig":
         """Validate that required params are provided for each generator type."""
-        match self.generator:
-            case GeneratorType.FAKER:
-                if not self.provider:
-                    raise ValueError("faker generator requires 'provider' parameter")
-            case GeneratorType.CHOICE:
-                if not self.values:
-                    raise ValueError("choice generator requires 'values' parameter")
-                if self.weights and len(self.weights) != len(self.values):
-                    raise ValueError("weights length must match values length")
-            case GeneratorType.DISTRIBUTION:
-                if not self.source:
-                    raise ValueError("distribution generator requires 'source' parameter")
-            case GeneratorType.REGEX:
-                if not self.pattern:
-                    raise ValueError("regex generator requires 'pattern' parameter")
-            case GeneratorType.RANGE:
-                if self.min_value is None or self.max_value is None:
-                    raise ValueError("range generator requires 'min_value' and 'max_value'")
+        g = self.generator
+        if g == GeneratorType.FAKER:
+            if not self.provider:
+                raise ValueError("faker generator requires 'provider' parameter")
+        elif g == GeneratorType.CHOICE:
+            if not self.values:
+                raise ValueError("choice generator requires 'values' parameter")
+            if self.weights and len(self.weights) != len(self.values):
+                raise ValueError("weights length must match values length")
+        elif g == GeneratorType.DISTRIBUTION:
+            if not self.source:
+                raise ValueError("distribution generator requires 'source' parameter")
+        elif g == GeneratorType.REGEX:
+            if not self.pattern:
+                raise ValueError("regex generator requires 'pattern' parameter")
+        elif g == GeneratorType.RANGE:
+            if self.min_value is None or self.max_value is None:
+                raise ValueError("range generator requires 'min_value' and 'max_value'")
         return self
 
 

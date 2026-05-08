@@ -348,66 +348,66 @@ class SynthEngine:
         """Convert column config to SQL expression."""
         seed_val = seed if seed is not None else 0
 
-        match config.generator:
-            case GeneratorType.UNIFORM:
-                min_v = config.min_value if config.min_value is not None else 0
-                max_v = config.max_value if config.max_value is not None else 100
-                expr = f"UNIFORM({min_v}::FLOAT, {max_v}::FLOAT, RANDOM({seed_val}))"
+        g = config.generator
+        if g == GeneratorType.UNIFORM:
+            min_v = config.min_value if config.min_value is not None else 0
+            max_v = config.max_value if config.max_value is not None else 100
+            expr = f"UNIFORM({min_v}::FLOAT, {max_v}::FLOAT, RANDOM({seed_val}))"
 
-            case GeneratorType.SEQ:
-                expr = f"(SEQ8() * {config.step} + {config.start})"
+        elif g == GeneratorType.SEQ:
+            expr = f"(SEQ8() * {config.step} + {config.start})"
 
-            case GeneratorType.CHOICE:
-                if not config.values:
-                    return "NULL"
-                weights = config.weights or [1.0 / len(config.values)] * len(config.values)
-                total = sum(weights)
-                weights = [w / total for w in weights]
+        elif g == GeneratorType.CHOICE:
+            if not config.values:
+                return "NULL"
+            weights = config.weights or [1.0 / len(config.values)] * len(config.values)
+            total = sum(weights)
+            weights = [w / total for w in weights]
 
-                cases = []
-                cumulative = 0.0
-                for val, weight in zip(config.values, weights):
-                    cumulative += weight
-                    val_str = f"'{val}'" if isinstance(val, str) else str(val)
-                    cases.append(f"WHEN RANDOM({seed_val}) < {cumulative} THEN {val_str}")
+            cases = []
+            cumulative = 0.0
+            for val, weight in zip(config.values, weights):
+                cumulative += weight
+                val_str = f"'{val}'" if isinstance(val, str) else str(val)
+                cases.append(f"WHEN RANDOM({seed_val}) < {cumulative} THEN {val_str}")
 
-                default_val = config.values[-1]
-                default_str = f"'{default_val}'" if isinstance(default_val, str) else str(default_val)
-                expr = f"CASE {' '.join(cases)} ELSE {default_str} END"
+            default_val = config.values[-1]
+            default_str = f"'{default_val}'" if isinstance(default_val, str) else str(default_val)
+            expr = f"CASE {' '.join(cases)} ELSE {default_str} END"
 
-            case GeneratorType.RANGE:
-                min_v = config.min_value
-                max_v = config.max_value
-                expr = f"UNIFORM({min_v}::FLOAT, {max_v}::FLOAT, RANDOM({seed_val}))"
+        elif g == GeneratorType.RANGE:
+            min_v = config.min_value
+            max_v = config.max_value
+            expr = f"UNIFORM({min_v}::FLOAT, {max_v}::FLOAT, RANDOM({seed_val}))"
 
-            case GeneratorType.DISTRIBUTION:
-                if config.source:
-                    parts = config.source.split(".")
-                    if len(parts) == 4:
-                        stats = self._stats_sampler.sample_column(
-                            parts[0], parts[1], parts[2], parts[3]
-                        )
-                        from sf_synth.stats import generate_sampling_sql
-                        return generate_sampling_sql(stats, col_name).replace(f" AS {col_name}", "")
-                expr = "NULL"
-
-            case GeneratorType.FAKER:
-                provider = config.provider or "name"
-                locale = config.locale
-
-                try:
-                    udf_name = self._faker_manager.get_or_register_udf(
-                        provider, locale, seed
+        elif g == GeneratorType.DISTRIBUTION:
+            if config.source:
+                parts = config.source.split(".")
+                if len(parts) == 4:
+                    stats = self._stats_sampler.sample_column(
+                        parts[0], parts[1], parts[2], parts[3]
                     )
-                    expr = f"{udf_name}()"
-                except Exception:
-                    expr = f"'fake_{provider}_' || SEQ8()::VARCHAR"
+                    from sf_synth.stats import generate_sampling_sql
+                    return generate_sampling_sql(stats, col_name).replace(f" AS {col_name}", "")
+            expr = "NULL"
 
-            case GeneratorType.REGEX:
-                expr = f"'pattern_' || SEQ8()::VARCHAR"
+        elif g == GeneratorType.FAKER:
+            provider = config.provider or "name"
+            locale = config.locale
 
-            case _:
-                expr = "NULL"
+            try:
+                udf_name = self._faker_manager.get_or_register_udf(
+                    provider, locale, seed
+                )
+                expr = f"{udf_name}()"
+            except Exception:
+                expr = f"'fake_{provider}_' || SEQ8()::VARCHAR"
+
+        elif g == GeneratorType.REGEX:
+            expr = f"'pattern_' || SEQ8()::VARCHAR"
+
+        else:
+            expr = "NULL"
 
         if config.null_ratio > 0:
             expr = f"IFF(UNIFORM(0::FLOAT, 1::FLOAT, RANDOM({seed_val})) < {config.null_ratio}, NULL, {expr})"
@@ -424,45 +424,44 @@ class SynthEngine:
         """Convert generator params to SQL expression."""
         seed_val = seed if seed is not None else 0
 
-        match gen_type:
-            case "uniform":
-                min_v = params.get("min_value", 0)
-                max_v = params.get("max_value", 100)
-                return f"UNIFORM({min_v}::FLOAT, {max_v}::FLOAT, RANDOM({seed_val}))"
+        if gen_type == "uniform":
+            min_v = params.get("min_value", 0)
+            max_v = params.get("max_value", 100)
+            return f"UNIFORM({min_v}::FLOAT, {max_v}::FLOAT, RANDOM({seed_val}))"
 
-            case "seq":
-                start = params.get("start", 1)
-                step = params.get("step", 1)
-                return f"(SEQ8() * {step} + {start})"
+        elif gen_type == "seq":
+            start = params.get("start", 1)
+            step = params.get("step", 1)
+            return f"(SEQ8() * {step} + {start})"
 
-            case "choice":
-                values = params.get("values", [])
-                if not values:
-                    return "NULL"
-                weights = params.get("weights", [1.0 / len(values)] * len(values))
-
-                cases = []
-                cumulative = 0.0
-                for val, weight in zip(values, weights):
-                    cumulative += weight
-                    val_str = f"'{val}'" if isinstance(val, str) else str(val)
-                    cases.append(f"WHEN RANDOM({seed_val}) < {cumulative} THEN {val_str}")
-
-                default_val = values[-1]
-                default_str = f"'{default_val}'" if isinstance(default_val, str) else str(default_val)
-                return f"CASE {' '.join(cases)} ELSE {default_str} END"
-
-            case "faker":
-                provider = params.get("provider", "name")
-                locale = params.get("locale", "en_US")
-                try:
-                    udf_name = self._faker_manager.get_or_register_udf(provider, locale, seed)
-                    return f"{udf_name}()"
-                except Exception:
-                    return f"'fake_{provider}_' || SEQ8()::VARCHAR"
-
-            case _:
+        elif gen_type == "choice":
+            values = params.get("values", [])
+            if not values:
                 return "NULL"
+            weights = params.get("weights", [1.0 / len(values)] * len(values))
+
+            cases = []
+            cumulative = 0.0
+            for val, weight in zip(values, weights):
+                cumulative += weight
+                val_str = f"'{val}'" if isinstance(val, str) else str(val)
+                cases.append(f"WHEN RANDOM({seed_val}) < {cumulative} THEN {val_str}")
+
+            default_val = values[-1]
+            default_str = f"'{default_val}'" if isinstance(default_val, str) else str(default_val)
+            return f"CASE {' '.join(cases)} ELSE {default_str} END"
+
+        elif gen_type == "faker":
+            provider = params.get("provider", "name")
+            locale = params.get("locale", "en_US")
+            try:
+                udf_name = self._faker_manager.get_or_register_udf(provider, locale, seed)
+                return f"{udf_name}()"
+            except Exception:
+                return f"'fake_{provider}_' || SEQ8()::VARCHAR"
+
+        else:
+            return "NULL"
 
     def _generate_fk_expr(
         self,

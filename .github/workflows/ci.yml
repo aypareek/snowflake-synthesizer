@@ -1,6 +1,5 @@
 name: CI
 
-# Runs on every push and pull request to main
 on:
   push:
     branches: [main]
@@ -14,7 +13,7 @@ jobs:
 
     strategy:
       matrix:
-        python-version: ["3.9", "3.10", "3.11", "3.12"]
+        python-version: ["3.10", "3.11", "3.12"]
 
     steps:
       - uses: actions/checkout@v4
@@ -22,12 +21,33 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+          cache: pip
 
-      - name: Install dev dependencies
-        run: pip install -e ".[dev]"
+      - name: Upgrade pip
+        run: python -m pip install --upgrade pip
+
+      # Install only the lightweight deps needed for unit tests.
+      # Snowflake packages are heavy and not needed for pure-Python tests.
+      - name: Install test dependencies
+        run: |
+          pip install \
+            pydantic>=2.0.0 \
+            pyyaml>=6.0 \
+            networkx>=3.0 \
+            faker>=18.0.0 \
+            "typer[all]>=0.9.0" \
+            rich>=13.0.0 \
+            pytest>=7.0.0 \
+            pytest-cov>=4.0.0
 
       - name: Lint with ruff
-        run: ruff check src/ tests/
+        run: |
+          pip install ruff>=0.1.0
+          ruff check src/ tests/
 
+      # PYTHONPATH=src lets pytest find the package without a full editable install,
+      # which avoids needing snowflake-snowpark-python at test time.
       - name: Run unit tests
+        env:
+          PYTHONPATH: src
         run: pytest tests/unit/ -v --tb=short

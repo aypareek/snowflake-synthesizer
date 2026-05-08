@@ -4,11 +4,11 @@ build-backend = "hatchling.build"
 
 [project]
 name = "sf-synth"
-version = "0.1.0"
+version = "0.2.0"
 description = "High-fidelity synthetic data generation for Snowflake"
 readme = "README.md"
 license = "MIT"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 authors = [
     { name = "Apareek", email = "ayushpareek1608@gmail.com" }
 ]
@@ -18,7 +18,6 @@ classifiers = [
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -57,7 +56,7 @@ Changelog = "https://github.com/apareek/snowflake-synthesizer/blob/main/CHANGELO
 packages = ["src/sf_synth"]
 
 [tool.ruff]
-target-version = "py39"
+target-version = "py310"
 line-length = 100
 src = ["src", "tests"]
 
@@ -83,7 +82,7 @@ ignore = [
 known-first-party = ["sf_synth"]
 
 [tool.mypy]
-python_version = "3.9"
+python_version = "3.10"
 strict = true
 warn_return_any = true
 warn_unused_ignores = true
