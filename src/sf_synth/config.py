@@ -233,7 +233,7 @@ def save_config(config: SynthConfig, path: str | Path) -> None:
         path: Path to the output YAML file.
     """
     path = Path(path)
-    data = config.model_dump(exclude_none=True, exclude_defaults=True, by_alias=True)
+    data = config.model_dump(mode="json", exclude_none=True, exclude_defaults=True, by_alias=True)
 
     with open(path, "w") as f:
         yaml.dump(data, f, default_flow_style=False, sort_keys=False)
