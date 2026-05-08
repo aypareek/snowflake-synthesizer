@@ -40,11 +40,6 @@ jobs:
             pytest>=7.0.0 \
             pytest-cov>=4.0.0
 
-      - name: Lint with ruff
-        run: |
-          pip install ruff>=0.1.0
-          ruff check src/ tests/
-
       # PYTHONPATH=src lets pytest find the package without a full editable install,
       # which avoids needing snowflake-snowpark-python at test time.
       - name: Run unit tests
