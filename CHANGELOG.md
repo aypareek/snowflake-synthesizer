@@ -3,6 +3,20 @@
 All notable changes to sf-synth are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.0] - 2026-05-08
+
+### Fixed
+- Replaced `match`/`case` statements with `if/elif` chains for Python 3.10 compatibility.
+- Bumped minimum Python version to 3.10.
+- Fixed CI workflow to install lightweight test deps via `PYTHONPATH=src` instead of a full editable install.
+
+### Added
+- Multi-schema example (`examples/multi_schema.yaml`).
+- GitHub Actions workflows for CI and automated PyPI publishing.
+- CHANGELOG.md and improved `pyproject.toml` metadata.
+
+---
+
 ## [0.1.0] - 2026-05-08
 
 ### Added
