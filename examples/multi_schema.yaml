@@ -1,0 +1,272 @@
+# Multi-Schema Example
+# Demonstrates tables across different schemas within the same database.
+# Cross-schema FKs are fully supported in v1.
+
+defaults:
+  seed: 42
+  locale: en_US
+  database: ENTERPRISE_DB  # Single database, multiple schemas
+
+tables:
+  # ============================================
+  # CORE schema - shared reference data
+  # ============================================
+  - name: ENTERPRISE_DB.CORE.REGIONS
+    rows: 10
+    columns:
+      ID:
+        generator: seq
+        start: 1
+      NAME:
+        generator: choice
+        values:
+          - North America
+          - South America
+          - Europe
+          - Asia Pacific
+          - Middle East
+          - Africa
+      CODE:
+        generator: choice
+        values: [NA, SA, EU, APAC, ME, AF]
+
+  - name: ENTERPRISE_DB.CORE.COUNTRIES
+    rows: 50
+    columns:
+      ID:
+        generator: seq
+        start: 1
+      NAME:
+        generator: faker
+        provider: country
+      ISO_CODE:
+        generator: faker
+        provider: country_code
+    relationships:
+      - column: REGION_ID
+        references: ENTERPRISE_DB.CORE.REGIONS.ID
+
+  # ============================================
+  # HR schema - employee data
+  # ============================================
+  - name: ENTERPRISE_DB.HR.DEPARTMENTS
+    rows: 25
+    columns:
+      ID:
+        generator: seq
+        start: 1
+      NAME:
+        generator: choice
+        values:
+          - Engineering
+          - Sales
+          - Marketing
+          - Finance
+          - Human Resources
+          - Legal
+          - Operations
+          - Customer Success
+      BUDGET:
+        generator: uniform
+        min_value: 100000
+        max_value: 5000000
+    relationships:
+      # FK to CORE schema
+      - column: COUNTRY_ID
+        references: ENTERPRISE_DB.CORE.COUNTRIES.ID
+
+  - name: ENTERPRISE_DB.HR.EMPLOYEES
+    rows: 500
+    columns:
+      ID:
+        generator: seq
+        start: 1
+      FIRST_NAME:
+        generator: faker
+        provider: first_name
+      LAST_NAME:
+        generator: faker
+        provider: last_name
+      EMAIL:
+        generator: faker
+        provider: email
+        unique: true
+      HIRE_DATE:
+        generator: faker
+        provider: date
+      SALARY:
+        generator: uniform
+        min_value: 40000
+        max_value: 250000
+      IS_ACTIVE:
+        generator: choice
+        values: [true, false]
+        weights: [0.92, 0.08]
+    relationships:
+      # FK to same schema
+      - column: DEPARTMENT_ID
+        references: ENTERPRISE_DB.HR.DEPARTMENTS.ID
+      # Self-referential FK
+      - column: MANAGER_ID
+        references: ENTERPRISE_DB.HR.EMPLOYEES.ID
+        null_ratio: 0.1
+        skew: zipf
+        skew_param: 1.5
+
+  # ============================================
+  # SALES schema - commercial data
+  # ============================================
+  - name: ENTERPRISE_DB.SALES.CUSTOMERS
+    rows: 5000
+    columns:
+      ID:
+        generator: seq
+        start: 1
+      COMPANY_NAME:
+        generator: faker
+        provider: company
+      CONTACT_EMAIL:
+        generator: faker
+        provider: email
+      PHONE:
+        generator: faker
+        provider: phone_number
+      INDUSTRY:
+        generator: choice
+        values:
+          - Technology
+          - Healthcare
+          - Finance
+          - Retail
+          - Manufacturing
+          - Education
+          - Government
+        weights: [0.25, 0.15, 0.15, 0.15, 0.12, 0.1, 0.08]
+      CREATED_AT:
+        generator: faker
+        provider: date_time
+    relationships:
+      # FK to CORE schema
+      - column: COUNTRY_ID
+        references: ENTERPRISE_DB.CORE.COUNTRIES.ID
+      # FK to HR schema - account owner
+      - column: ACCOUNT_OWNER_ID
+        references: ENTERPRISE_DB.HR.EMPLOYEES.ID
+        skew: zipf
+        skew_param: 1.3
+
+  - name: ENTERPRISE_DB.SALES.OPPORTUNITIES
+    rows: 15000
+    columns:
+      ID:
+        generator: seq
+        start: 1
+      NAME:
+        generator: faker
+        provider: sentence
+      STAGE:
+        generator: choice
+        values:
+          - Prospecting
+          - Qualification
+          - Proposal
+          - Negotiation
+          - Closed Won
+          - Closed Lost
+        weights: [0.15, 0.2, 0.25, 0.15, 0.15, 0.1]
+      AMOUNT:
+        generator: uniform
+        min_value: 1000
+        max_value: 500000
+      PROBABILITY:
+        generator: uniform
+        min_value: 0
+        max_value: 100
+      CLOSE_DATE:
+        generator: faker
+        provider: date
+      CREATED_AT:
+        generator: faker
+        provider: date_time
+    relationships:
+      # FK to same schema
+      - column: CUSTOMER_ID
+        references: ENTERPRISE_DB.SALES.CUSTOMERS.ID
+        skew: zipf
+        skew_param: 1.4
+      # FK to HR schema - opportunity owner
+      - column: OWNER_ID
+        references: ENTERPRISE_DB.HR.EMPLOYEES.ID
+        skew: zipf
+        skew_param: 1.5
+
+  # ============================================
+  # FINANCE schema - billing data
+  # ============================================
+  - name: ENTERPRISE_DB.FINANCE.INVOICES
+    rows: 20000
+    columns:
+      ID:
+        generator: seq
+        start: 1
+      INVOICE_NUMBER:
+        generator: regex
+        pattern: "INV-[0-9]{6}"
+        unique: true
+      AMOUNT:
+        generator: uniform
+        min_value: 100
+        max_value: 50000
+      TAX:
+        generator: uniform
+        min_value: 0
+        max_value: 5000
+      STATUS:
+        generator: choice
+        values: [draft, sent, paid, overdue, cancelled]
+        weights: [0.05, 0.15, 0.6, 0.15, 0.05]
+      ISSUE_DATE:
+        generator: faker
+        provider: date
+      DUE_DATE:
+        generator: faker
+        provider: date
+      PAID_DATE:
+        generator: faker
+        provider: date
+        null_ratio: 0.4
+    relationships:
+      # FK to SALES schema
+      - column: CUSTOMER_ID
+        references: ENTERPRISE_DB.SALES.CUSTOMERS.ID
+        skew: zipf
+        skew_param: 1.3
+      # FK to SALES schema - linked opportunity
+      - column: OPPORTUNITY_ID
+        references: ENTERPRISE_DB.SALES.OPPORTUNITIES.ID
+        null_ratio: 0.3
+
+  - name: ENTERPRISE_DB.FINANCE.PAYMENTS
+    rows: 18000
+    columns:
+      ID:
+        generator: seq
+        start: 1
+      AMOUNT:
+        generator: uniform
+        min_value: 100
+        max_value: 50000
+      PAYMENT_METHOD:
+        generator: choice
+        values: [credit_card, bank_transfer, check, wire]
+        weights: [0.4, 0.35, 0.1, 0.15]
+      PAYMENT_DATE:
+        generator: faker
+        provider: date
+      REFERENCE_NUMBER:
+        generator: regex
+        pattern: "PAY-[A-Z]{2}[0-9]{8}"
+    relationships:
+      # FK to same schema
+      - column: INVOICE_ID
+        references: ENTERPRISE_DB.FINANCE.INVOICES.ID

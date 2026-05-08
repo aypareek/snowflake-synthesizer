@@ -1,0 +1,221 @@
+# E-commerce Schema Example
+# Demonstrates referential integrity, distribution-preserving synthesis,
+# and various generator types.
+
+defaults:
+  seed: 42
+  locale: en_US
+  database: ECOMMERCE_DB
+  schema: PUBLIC
+
+tables:
+  # Parent table: Customers
+  - name: CUSTOMERS
+    rows: 10000
+    columns:
+      ID:
+        generator: seq
+        start: 1
+        step: 1
+      EMAIL:
+        generator: faker
+        provider: email
+        unique: true
+      FIRST_NAME:
+        generator: faker
+        provider: first_name
+      LAST_NAME:
+        generator: faker
+        provider: last_name
+      PHONE:
+        generator: faker
+        provider: phone_number
+      ADDRESS:
+        generator: faker
+        provider: street_address
+      CITY:
+        generator: faker
+        provider: city
+      STATE:
+        generator: faker
+        provider: state_abbr
+      ZIP_CODE:
+        generator: faker
+        provider: zipcode
+      COUNTRY:
+        generator: choice
+        values: ["USA", "Canada", "UK", "Germany", "France"]
+        weights: [0.6, 0.15, 0.1, 0.08, 0.07]
+      MEMBERSHIP:
+        generator: choice
+        values: ["Bronze", "Silver", "Gold", "Platinum"]
+        weights: [0.5, 0.3, 0.15, 0.05]
+      CREATED_AT:
+        generator: faker
+        provider: date_time
+      IS_ACTIVE:
+        generator: choice
+        values: [true, false]
+        weights: [0.9, 0.1]
+
+  # Product categories
+  - name: CATEGORIES
+    rows: 50
+    columns:
+      ID:
+        generator: seq
+        start: 1
+      NAME:
+        generator: choice
+        values:
+          - Electronics
+          - Clothing
+          - Home & Garden
+          - Sports
+          - Books
+          - Toys
+          - Food & Beverage
+          - Health & Beauty
+          - Automotive
+          - Office Supplies
+      DESCRIPTION:
+        generator: faker
+        provider: sentence
+
+  # Products with FK to categories
+  - name: PRODUCTS
+    rows: 5000
+    columns:
+      ID:
+        generator: seq
+        start: 1
+      SKU:
+        generator: regex
+        pattern: "[A-Z]{3}-[0-9]{4}"
+        unique: true
+      NAME:
+        generator: faker
+        provider: text
+      DESCRIPTION:
+        generator: faker
+        provider: paragraph
+      PRICE:
+        generator: uniform
+        min_value: 9.99
+        max_value: 999.99
+      COST:
+        generator: uniform
+        min_value: 5.00
+        max_value: 500.00
+      STOCK_QUANTITY:
+        generator: uniform
+        min_value: 0
+        max_value: 1000
+      IS_ACTIVE:
+        generator: choice
+        values: [true, false]
+        weights: [0.85, 0.15]
+    relationships:
+      - column: CATEGORY_ID
+        references: CATEGORIES.ID
+
+  # Orders with FK to customers
+  - name: ORDERS
+    rows: 50000
+    columns:
+      ID:
+        generator: seq
+        start: 1
+      ORDER_DATE:
+        generator: faker
+        provider: date_this_year
+      STATUS:
+        generator: choice
+        values: ["pending", "processing", "shipped", "delivered", "cancelled"]
+        weights: [0.1, 0.15, 0.2, 0.5, 0.05]
+      SUBTOTAL:
+        generator: uniform
+        min_value: 10.00
+        max_value: 2000.00
+      TAX:
+        generator: uniform
+        min_value: 0.00
+        max_value: 200.00
+      SHIPPING:
+        generator: uniform
+        min_value: 0.00
+        max_value: 50.00
+      TOTAL:
+        generator: uniform
+        min_value: 10.00
+        max_value: 2250.00
+      NOTES:
+        generator: faker
+        provider: sentence
+        null_ratio: 0.7
+    relationships:
+      - column: CUSTOMER_ID
+        references: CUSTOMERS.ID
+        skew: zipf
+        skew_param: 1.5
+
+  # Order items with FKs to orders and products
+  - name: ORDER_ITEMS
+    rows: 150000
+    columns:
+      ID:
+        generator: seq
+        start: 1
+      QUANTITY:
+        generator: uniform
+        min_value: 1
+        max_value: 10
+      UNIT_PRICE:
+        generator: uniform
+        min_value: 9.99
+        max_value: 999.99
+      DISCOUNT:
+        generator: uniform
+        min_value: 0.00
+        max_value: 0.30
+        null_ratio: 0.5
+    relationships:
+      - column: ORDER_ID
+        references: ORDERS.ID
+      - column: PRODUCT_ID
+        references: PRODUCTS.ID
+
+  # Reviews with FKs to customers and products
+  - name: REVIEWS
+    rows: 25000
+    columns:
+      ID:
+        generator: seq
+        start: 1
+      RATING:
+        generator: choice
+        values: [1, 2, 3, 4, 5]
+        weights: [0.05, 0.1, 0.15, 0.35, 0.35]
+      TITLE:
+        generator: faker
+        provider: sentence
+      BODY:
+        generator: faker
+        provider: paragraph
+        null_ratio: 0.2
+      CREATED_AT:
+        generator: faker
+        provider: date_time
+      IS_VERIFIED:
+        generator: choice
+        values: [true, false]
+        weights: [0.7, 0.3]
+    relationships:
+      - column: CUSTOMER_ID
+        references: CUSTOMERS.ID
+        skew: zipf
+        skew_param: 1.2
+      - column: PRODUCT_ID
+        references: PRODUCTS.ID
+        skew: zipf
+        skew_param: 1.3

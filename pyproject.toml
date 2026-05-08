@@ -1,0 +1,113 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "sf-synth"
+version = "0.1.0"
+description = "High-fidelity synthetic data generation for Snowflake"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.9"
+authors = [
+    { name = "Apareek", email = "ayushpareek1608@gmail.com" }
+]
+keywords = ["snowflake", "synthetic-data", "data-generation", "faker", "snowpark"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+    "snowflake-snowpark-python>=1.11.0",
+    "snowflake-connector-python>=3.0.0",
+    "faker>=18.0.0",
+    "networkx>=3.0",
+    "typer[all]>=0.9.0",
+    "pydantic>=2.0.0",
+    "pyyaml>=6.0",
+    "rich>=13.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "duckdb>=0.9.0",
+    "ruff>=0.1.0",
+    "mypy>=1.0.0",
+    "types-PyYAML>=6.0.0",
+]
+
+[project.scripts]
+sf-synth = "sf_synth.cli:app"
+
+[project.urls]
+Homepage = "https://github.com/apareek/snowflake-synthesizer"
+Repository = "https://github.com/apareek/snowflake-synthesizer"
+"Bug Tracker" = "https://github.com/apareek/snowflake-synthesizer/issues"
+Changelog = "https://github.com/apareek/snowflake-synthesizer/blob/main/CHANGELOG.md"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/sf_synth"]
+
+[tool.ruff]
+target-version = "py39"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # pyflakes
+    "I",      # isort
+    "B",      # flake8-bugbear
+    "C4",     # flake8-comprehensions
+    "UP",     # pyupgrade
+    "ARG",    # flake8-unused-arguments
+    "SIM",    # flake8-simplify
+]
+ignore = [
+    "E501",   # line too long (handled by formatter)
+    "B008",   # do not perform function calls in argument defaults
+    "B009",   # do not call getattr with a constant attribute value
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["sf_synth"]
+
+[tool.mypy]
+python_version = "3.9"
+strict = true
+warn_return_any = true
+warn_unused_ignores = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = [
+    "snowflake.*",
+    "faker.*",
+    "networkx.*",
+]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
+markers = [
+    "integration: marks tests as integration tests (require Snowflake credentials)",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]

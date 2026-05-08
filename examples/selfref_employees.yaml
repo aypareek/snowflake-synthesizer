@@ -1,0 +1,166 @@
+# Self-Referential Table Example: Employees with Managers
+# Demonstrates how sf-synth handles self-referential foreign keys
+# using a two-pass approach (insert with NULL, then UPDATE).
+
+defaults:
+  seed: 42
+  locale: en_US
+  database: HR_DB
+  schema: PUBLIC
+
+tables:
+  # Departments table
+  - name: DEPARTMENTS
+    rows: 20
+    columns:
+      ID:
+        generator: seq
+        start: 1
+      NAME:
+        generator: choice
+        values:
+          - Engineering
+          - Sales
+          - Marketing
+          - Human Resources
+          - Finance
+          - Legal
+          - Operations
+          - Customer Support
+          - Product
+          - Research & Development
+      LOCATION:
+        generator: faker
+        provider: city
+      BUDGET:
+        generator: uniform
+        min_value: 100000
+        max_value: 5000000
+
+  # Employees table with self-referential manager_id
+  # The manager_id points to another employee's id
+  - name: EMPLOYEES
+    rows: 500
+    columns:
+      ID:
+        generator: seq
+        start: 1
+      EMPLOYEE_NUMBER:
+        generator: regex
+        pattern: "EMP-[0-9]{5}"
+        unique: true
+      FIRST_NAME:
+        generator: faker
+        provider: first_name
+      LAST_NAME:
+        generator: faker
+        provider: last_name
+      EMAIL:
+        generator: faker
+        provider: email
+        unique: true
+      PHONE:
+        generator: faker
+        provider: phone_number
+      HIRE_DATE:
+        generator: faker
+        provider: date
+      JOB_TITLE:
+        generator: choice
+        values:
+          - Software Engineer
+          - Senior Software Engineer
+          - Staff Engineer
+          - Principal Engineer
+          - Engineering Manager
+          - Director
+          - VP
+          - Sales Representative
+          - Account Executive
+          - Sales Manager
+          - Marketing Specialist
+          - Product Manager
+          - HR Specialist
+          - Financial Analyst
+          - Operations Coordinator
+      SALARY:
+        generator: uniform
+        min_value: 50000
+        max_value: 300000
+      COMMISSION_PCT:
+        generator: uniform
+        min_value: 0.0
+        max_value: 0.4
+        null_ratio: 0.7
+      IS_ACTIVE:
+        generator: choice
+        values: [true, false]
+        weights: [0.95, 0.05]
+    relationships:
+      # FK to departments
+      - column: DEPARTMENT_ID
+        references: DEPARTMENTS.ID
+      # Self-referential FK: most employees have a manager
+      # ~10% will be NULL (top-level executives)
+      - column: MANAGER_ID
+        references: EMPLOYEES.ID
+        null_ratio: 0.1
+        skew: zipf
+        skew_param: 1.8
+
+  # Projects assigned to employees
+  - name: PROJECTS
+    rows: 100
+    columns:
+      ID:
+        generator: seq
+        start: 1
+      NAME:
+        generator: faker
+        provider: sentence
+      DESCRIPTION:
+        generator: faker
+        provider: paragraph
+      START_DATE:
+        generator: faker
+        provider: date
+      END_DATE:
+        generator: faker
+        provider: date
+        null_ratio: 0.3
+      STATUS:
+        generator: choice
+        values: ["planning", "active", "on_hold", "completed", "cancelled"]
+        weights: [0.15, 0.4, 0.1, 0.3, 0.05]
+      BUDGET:
+        generator: uniform
+        min_value: 10000
+        max_value: 1000000
+    relationships:
+      # Project lead - must be an employee
+      - column: LEAD_ID
+        references: EMPLOYEES.ID
+
+  # Many-to-many: Employee-Project assignments
+  - name: PROJECT_ASSIGNMENTS
+    rows: 800
+    columns:
+      ID:
+        generator: seq
+        start: 1
+      ROLE:
+        generator: choice
+        values: ["contributor", "reviewer", "lead", "consultant"]
+        weights: [0.6, 0.2, 0.1, 0.1]
+      ASSIGNED_DATE:
+        generator: faker
+        provider: date
+      HOURS_ALLOCATED:
+        generator: uniform
+        min_value: 10
+        max_value: 160
+    relationships:
+      - column: EMPLOYEE_ID
+        references: EMPLOYEES.ID
+      - column: PROJECT_ID
+        references: PROJECTS.ID
