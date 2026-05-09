@@ -156,19 +156,35 @@ def discover_schema(
         SchemaModel with discovered tables and constraints.
 
     Raises:
-        DiscoveryError: If discovery fails.
+        DiscoveryError: If column discovery fails (fatal).
+            Constraint discovery failures (e.g. shared/read-only databases
+            that don't expose KEY_COLUMN_USAGE) are non-fatal and result in
+            a schema with no PK/FK information.
     """
+    import warnings
+
     model = SchemaModel(database=database)
 
     try:
         _discover_columns(session, database, schemas, tables, model)
-        _discover_constraints(session, database, schemas, tables, model)
-
-        if include_row_counts:
-            _discover_row_counts(session, model)
-
     except Exception as e:
         raise DiscoveryError(f"Schema discovery failed: {e}") from e
+
+    if model.tables:
+        try:
+            _discover_constraints(session, database, schemas, tables, model)
+        except Exception as e:
+            warnings.warn(
+                f"Could not discover PK/FK constraints for '{database}': {e}. "
+                "This can happen when the active role lacks REFERENCES privilege "
+                "on the tables, or when the database is a shared/read-only database. "
+                "Continuing without PK/FK information — you can add relationships "
+                "manually in the generated YAML.",
+                stacklevel=2,
+            )
+
+    if include_row_counts:
+        _discover_row_counts(session, model)
 
     return model
 
@@ -269,145 +285,115 @@ def _discover_constraints(
     tables: list[str] | None,
     model: SchemaModel,
 ) -> None:
-    """Discover PK, FK, and UNIQUE constraints."""
-    schema_filter = ""
-    if schemas:
-        schema_list = ", ".join(f"'{s}'" for s in schemas)
-        schema_filter = f"AND tc.TABLE_SCHEMA IN ({schema_list})"
+    """Discover PK, FK, and UNIQUE constraints using SHOW commands.
 
-    table_filter = ""
-    if tables:
-        table_list = ", ".join(f"'{t}'" for t in tables)
-        table_filter = f"AND tc.TABLE_NAME IN ({table_list})"
-
-    constraints_sql = f"""
-    SELECT
-        tc.CONSTRAINT_NAME,
-        tc.CONSTRAINT_TYPE,
-        tc.TABLE_CATALOG,
-        tc.TABLE_SCHEMA,
-        tc.TABLE_NAME,
-        kcu.COLUMN_NAME,
-        kcu.ORDINAL_POSITION,
-        rc.UNIQUE_CONSTRAINT_CATALOG,
-        rc.UNIQUE_CONSTRAINT_SCHEMA,
-        rc.UNIQUE_CONSTRAINT_NAME
-    FROM "{database}".INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc
-    LEFT JOIN "{database}".INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu
-        ON tc.CONSTRAINT_NAME = kcu.CONSTRAINT_NAME
-        AND tc.TABLE_SCHEMA = kcu.TABLE_SCHEMA
-        AND tc.TABLE_NAME = kcu.TABLE_NAME
-    LEFT JOIN "{database}".INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS rc
-        ON tc.CONSTRAINT_NAME = rc.CONSTRAINT_NAME
-        AND tc.TABLE_SCHEMA = rc.CONSTRAINT_SCHEMA
-    WHERE tc.CONSTRAINT_TYPE IN ('PRIMARY KEY', 'FOREIGN KEY', 'UNIQUE')
-    {schema_filter}
-    {table_filter}
-    ORDER BY tc.TABLE_SCHEMA, tc.TABLE_NAME, tc.CONSTRAINT_NAME, kcu.ORDINAL_POSITION
+    Uses SHOW PRIMARY KEYS / SHOW IMPORTED KEYS / SHOW UNIQUE KEYS rather than
+    INFORMATION_SCHEMA.KEY_COLUMN_USAGE, which is unavailable in some Snowflake
+    editions and shared/imported databases.
     """
+    schema_set = {s.upper() for s in schemas} if schemas else None
+    table_set = {t.upper() for t in tables} if tables else None
 
-    result = session.sql(constraints_sql).collect()
+    def _in_scope(row_db: str, row_schema: str, row_table: str) -> bool:
+        if row_db.upper() != database.upper():
+            return False
+        if schema_set and row_schema.upper() not in schema_set:
+            return False
+        if table_set and row_table.upper() not in table_set:
+            return False
+        return True
 
-    constraints: dict[str, dict[str, list]] = {}
+    # ── Primary keys ────────────────────────────────────────────────────────
+    # Columns: created_on, database_name, schema_name, table_name,
+    #          column_name, key_sequence, constraint_name, rely, comment
+    pk_rows = session.sql(f"SHOW PRIMARY KEYS IN DATABASE \"{database}\"").collect()
 
-    for row in result:
-        db = row["TABLE_CATALOG"]
-        schema = row["TABLE_SCHEMA"]
-        table_name = row["TABLE_NAME"]
-        fqn = f"{db}.{schema}.{table_name}"
+    pk_map: dict[str, dict[str, list[str]]] = {}  # fqn -> constraint_name -> [cols]
+    for row in pk_rows:
+        db, schema, tbl = row["database_name"], row["schema_name"], row["table_name"]
+        if not _in_scope(db, schema, tbl):
+            continue
+        fqn = f"{db}.{schema}.{tbl}"
+        cname = row["constraint_name"]
+        pk_map.setdefault(fqn, {}).setdefault(cname, [])
+        pk_map[fqn][cname].append(row["column_name"])
 
-        if fqn not in constraints:
-            constraints[fqn] = {}
-
-        constraint_name = row["CONSTRAINT_NAME"]
-        constraint_type = row["CONSTRAINT_TYPE"]
-
-        key = f"{constraint_type}:{constraint_name}"
-        if key not in constraints[fqn]:
-            constraints[fqn][key] = []
-
-        constraints[fqn][key].append(row)
-
-    for fqn, table_constraints in constraints.items():
+    for fqn, constraints in pk_map.items():
         if fqn not in model.tables:
             continue
+        for cname, cols in constraints.items():
+            model.tables[fqn].primary_key = PrimaryKeyInfo(
+                constraint_name=cname, columns=cols
+            )
 
-        table_info = model.tables[fqn]
-
-        for key, rows in table_constraints.items():
-            constraint_type, constraint_name = key.split(":", 1)
-            columns = [r["COLUMN_NAME"] for r in rows if r["COLUMN_NAME"]]
-
-            if constraint_type == "PRIMARY KEY":
-                table_info.primary_key = PrimaryKeyInfo(
-                    constraint_name=constraint_name,
-                    columns=columns,
-                )
-            elif constraint_type == "UNIQUE":
-                table_info.unique_constraints.append(
-                    UniqueConstraintInfo(
-                        constraint_name=constraint_name,
-                        columns=columns,
-                    )
-                )
-            elif constraint_type == "FOREIGN KEY":
-                first_row = rows[0]
-                ref_constraint = first_row["UNIQUE_CONSTRAINT_NAME"]
-                if ref_constraint:
-                    ref_info = _get_referenced_table(
-                        session,
-                        database,
-                        first_row["UNIQUE_CONSTRAINT_SCHEMA"] or table_info.schema,
-                        ref_constraint,
-                    )
-                    if ref_info:
-                        table_info.foreign_keys.append(
-                            ForeignKeyInfo(
-                                constraint_name=constraint_name,
-                                columns=columns,
-                                referenced_database=ref_info["database"],
-                                referenced_schema=ref_info["schema"],
-                                referenced_table=ref_info["table"],
-                                referenced_columns=ref_info["columns"],
-                            )
-                        )
-
-
-def _get_referenced_table(
-    session: Session,
-    database: str,
-    schema: str,
-    constraint_name: str,
-) -> dict | None:
-    """Get referenced table info for a unique constraint."""
-    ref_sql = f"""
-    SELECT
-        tc.TABLE_CATALOG,
-        tc.TABLE_SCHEMA,
-        tc.TABLE_NAME,
-        kcu.COLUMN_NAME
-    FROM "{database}".INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc
-    JOIN "{database}".INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu
-        ON tc.CONSTRAINT_NAME = kcu.CONSTRAINT_NAME
-        AND tc.TABLE_SCHEMA = kcu.TABLE_SCHEMA
-    WHERE tc.CONSTRAINT_NAME = '{constraint_name}'
-    AND tc.TABLE_SCHEMA = '{schema}'
-    ORDER BY kcu.ORDINAL_POSITION
-    """
-
+    # ── Unique keys ──────────────────────────────────────────────────────────
+    # Same column layout as SHOW PRIMARY KEYS
     try:
-        result = session.sql(ref_sql).collect()
-        if result:
-            return {
-                "database": result[0]["TABLE_CATALOG"],
-                "schema": result[0]["TABLE_SCHEMA"],
-                "table": result[0]["TABLE_NAME"],
-                "columns": [r["COLUMN_NAME"] for r in result],
-            }
-    except Exception:
-        pass
+        uk_rows = session.sql(f"SHOW UNIQUE KEYS IN DATABASE \"{database}\"").collect()
+        uk_map: dict[str, dict[str, list[str]]] = {}
+        for row in uk_rows:
+            db, schema, tbl = row["database_name"], row["schema_name"], row["table_name"]
+            if not _in_scope(db, schema, tbl):
+                continue
+            fqn = f"{db}.{schema}.{tbl}"
+            cname = row["constraint_name"]
+            uk_map.setdefault(fqn, {}).setdefault(cname, [])
+            uk_map[fqn][cname].append(row["column_name"])
 
-    return None
+        for fqn, constraints in uk_map.items():
+            if fqn not in model.tables:
+                continue
+            for cname, cols in constraints.items():
+                model.tables[fqn].unique_constraints.append(
+                    UniqueConstraintInfo(constraint_name=cname, columns=cols)
+                )
+    except Exception:
+        pass  # UNIQUE KEY support is optional
+
+    # ── Foreign keys (imported keys) ─────────────────────────────────────────
+    # Columns: created_on, pk_database_name, pk_schema_name, pk_table_name,
+    #          pk_column_name, fk_database_name, fk_schema_name, fk_table_name,
+    #          fk_column_name, key_sequence, update_rule, delete_rule,
+    #          fk_name, pk_name, deferrability, initially, rely, comment
+    fk_rows = session.sql(f"SHOW IMPORTED KEYS IN DATABASE \"{database}\"").collect()
+
+    fk_map: dict[str, dict[str, dict]] = {}  # fqn -> fk_name -> {cols, ref info}
+    for row in fk_rows:
+        fk_db = row["fk_database_name"]
+        fk_schema = row["fk_schema_name"]
+        fk_tbl = row["fk_table_name"]
+        if not _in_scope(fk_db, fk_schema, fk_tbl):
+            continue
+        fqn = f"{fk_db}.{fk_schema}.{fk_tbl}"
+        fk_name = row["fk_name"]
+
+        if fqn not in fk_map:
+            fk_map[fqn] = {}
+        if fk_name not in fk_map[fqn]:
+            fk_map[fqn][fk_name] = {
+                "fk_cols": [],
+                "ref_db": row["pk_database_name"],
+                "ref_schema": row["pk_schema_name"],
+                "ref_table": row["pk_table_name"],
+                "ref_cols": [],
+            }
+        fk_map[fqn][fk_name]["fk_cols"].append(row["fk_column_name"])
+        fk_map[fqn][fk_name]["ref_cols"].append(row["pk_column_name"])
+
+    for fqn, fks in fk_map.items():
+        if fqn not in model.tables:
+            continue
+        for fk_name, info in fks.items():
+            model.tables[fqn].foreign_keys.append(
+                ForeignKeyInfo(
+                    constraint_name=fk_name,
+                    columns=info["fk_cols"],
+                    referenced_database=info["ref_db"],
+                    referenced_schema=info["ref_schema"],
+                    referenced_table=info["ref_table"],
+                    referenced_columns=info["ref_cols"],
+                )
+            )
 
 
 def _discover_row_counts(session: Session, model: SchemaModel) -> None:

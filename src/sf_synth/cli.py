@@ -108,6 +108,30 @@ def discover(
         yaml.dump(yaml_data, f, default_flow_style=False, sort_keys=False)
 
     console.print(f"\n[green]Discovered {len(schema_model.tables)} tables[/green]")
+
+    if not schema_model.tables:
+        console.print(
+            f"\n[yellow]No tables found in '{database}'.[/yellow] Possible reasons:\n"
+            "  1. The database is empty — create some tables first\n"
+            "  2. The role in your connection lacks USAGE privilege\n"
+            f"     Run in Snowflake: [bold]GRANT USAGE ON DATABASE {database} TO ROLE <your_role>;[/bold]\n"
+            "  3. Use [bold]--schemas MY_SCHEMA[/bold] to target a specific schema"
+        )
+        backend.disconnect()
+        return
+
+    has_constraints = any(
+        tbl.primary_key or tbl.foreign_keys
+        for tbl in schema_model.tables.values()
+    )
+    if not has_constraints:
+        console.print(
+            "[yellow]Note:[/yellow] No PK/FK constraints found. "
+            "Shared or read-only databases (e.g. SNOWFLAKE_SAMPLE_DATA) "
+            "don't expose KEY_COLUMN_USAGE — you can define relationships "
+            "manually in the generated YAML."
+        )
+
     console.print(f"[blue]Config written to: {output}[/blue]")
 
     table = Table(title="Discovered Tables")
