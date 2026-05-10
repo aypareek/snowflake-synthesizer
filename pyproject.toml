@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "sf-synth"
-version = "0.2.0"
+version = "0.3.0"
 description = "High-fidelity synthetic data generation for Snowflake"
 readme = "README.md"
 license = "MIT"

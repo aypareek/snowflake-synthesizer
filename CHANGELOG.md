@@ -3,6 +3,23 @@
 All notable changes to sf-synth are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.3.0] - 2026-05-10
+
+### Fixed
+- Replaced `INFORMATION_SCHEMA.KEY_COLUMN_USAGE` / `REFERENTIAL_CONSTRAINTS` queries
+  with `SHOW PRIMARY KEYS`, `SHOW IMPORTED KEYS`, and `SHOW UNIQUE KEYS` — these work
+  on all Snowflake editions and user-created databases where `KEY_COLUMN_USAGE` is absent.
+- Constraint discovery is now non-fatal: if `SHOW` commands fail (e.g. shared/read-only
+  databases), column discovery still succeeds and the CLI prints a clear warning.
+- CLI `discover` now exits cleanly with an actionable message when 0 tables are found,
+  listing likely causes (empty database, missing USAGE grant, wrong role).
+- Constraint discovery is skipped when no tables were found (avoids redundant queries).
+
+### Changed
+- Named connection (`--connection`) now correctly passes through to all CLI commands.
+
+---
+
 ## [0.2.0] - 2026-05-08
 
 ### Fixed
