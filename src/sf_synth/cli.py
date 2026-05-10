@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+import warnings
 from pathlib import Path
 from typing import Optional
 
@@ -10,7 +12,6 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.table import Table
-from rich.tree import Tree
 
 app = typer.Typer(
     name="sf-synth",
@@ -19,6 +20,27 @@ app = typer.Typer(
 )
 
 console = Console()
+
+
+def _configure_verbosity(verbose: bool, quiet: bool) -> None:
+    """Configure log levels and warning filters globally for the CLI."""
+    if quiet:
+        warnings.filterwarnings("ignore")
+        logging.getLogger().setLevel(logging.ERROR)
+        logging.getLogger("snowflake").setLevel(logging.ERROR)
+    elif verbose:
+        warnings.simplefilter("default")
+        logging.getLogger().setLevel(logging.DEBUG)
+    else:
+        warnings.filterwarnings(
+            "ignore",
+            message=r".*The version of package 'faker' in the local environment.*",
+        )
+        warnings.filterwarnings(
+            "ignore",
+            message=r".*Bad owner or permissions on .*connections\.toml.*",
+        )
+        logging.getLogger("snowflake").setLevel(logging.WARNING)
 
 
 def _get_backend(
@@ -78,8 +100,11 @@ def discover(
         "--row-counts",
         help="Include actual row counts (slower)",
     ),
+    verbose: bool = typer.Option(False, "--verbose", "-v"),
+    quiet: bool = typer.Option(False, "--quiet", "-q"),
 ) -> None:
     """Discover schema from Snowflake and generate a starter config."""
+    _configure_verbosity(verbose, quiet)
     import yaml
 
     from sf_synth.discovery import schema_to_yaml
@@ -163,10 +188,12 @@ def plan(
         "--dag/--no-dag",
         help="Show dependency DAG visualization",
     ),
+    verbose: bool = typer.Option(False, "--verbose", "-v"),
+    quiet: bool = typer.Option(False, "--quiet", "-q"),
 ) -> None:
     """Show generation plan without executing."""
+    _configure_verbosity(verbose, quiet)
     from sf_synth.config import load_config
-    from sf_synth.dag import build_dag_from_config
 
     cfg = load_config(config)
 
@@ -210,12 +237,10 @@ def plan(
     order_table.add_column("Dependencies")
 
     table_estimates = estimates.get("tables", {})
-    deps_map = {}
+    deps_map: dict[str, list[str]] = {}
     for dep in plan_summary.get("dependencies", []):
         child = dep["child"]
-        if child not in deps_map:
-            deps_map[child] = []
-        deps_map[child].append(dep["parent"].split(".")[-1])
+        deps_map.setdefault(child, []).append(dep["parent"].split(".")[-1])
 
     for idx, table_fqn in enumerate(plan_summary["generation_order"], 1):
         table_name = table_fqn.split(".")[-1]
@@ -258,17 +283,82 @@ def generate(
         "--seed",
         help="Override random seed for reproducibility",
     ),
+    mode: Optional[str] = typer.Option(
+        None,
+        "--mode",
+        help="Write mode: replace | append | upsert | fill_to (overrides per-table config)",
+    ),
+    truncate: Optional[bool] = typer.Option(
+        None,
+        "--truncate/--no-truncate",
+        help="Force or disable truncate-before-write",
+    ),
+    parallel: int = typer.Option(
+        1,
+        "--parallel",
+        "-p",
+        help="Number of independent tables to generate in parallel (>=1)",
+    ),
+    report: Optional[Path] = typer.Option(
+        None,
+        "--report",
+        help="Write a markdown report of the run to this file",
+    ),
+    profile: bool = typer.Option(
+        False,
+        "--profile",
+        help="Include per-column distinct/null/min/max stats in the report",
+    ),
+    tables: Optional[str] = typer.Option(
+        None,
+        "--tables",
+        "-t",
+        help="Comma-separated list of table names (or suffixes) to generate. "
+        "All other tables in the config will be skipped.",
+    ),
+    verbose: bool = typer.Option(False, "--verbose", "-v"),
+    quiet: bool = typer.Option(False, "--quiet", "-q"),
 ) -> None:
     """Generate synthetic data."""
-    from sf_synth.config import load_config
+    _configure_verbosity(verbose, quiet)
+
+    from sf_synth.config import WriteMode, load_config
 
     cfg = load_config(config)
 
     if seed is not None:
         cfg.defaults.seed = seed
 
-    total_rows = cfg.get_total_rows()
+    if mode is not None:
+        try:
+            mode_enum = WriteMode(mode)
+        except ValueError:
+            valid = ", ".join(m.value for m in WriteMode)
+            console.print(f"[red]Invalid --mode '{mode}'.[/red] Use one of: {valid}")
+            raise typer.Exit(2)
+        for tbl in cfg.tables:
+            tbl.write_mode = mode_enum
 
+    if tables:
+        wanted = [t.strip().upper() for t in tables.split(",") if t.strip()]
+        kept: list = []
+        for tbl in cfg.tables:
+            tbl_name = tbl.name.upper()
+            tbl_short = tbl_name.split(".")[-1]
+            if any(w == tbl_name or w == tbl_short or tbl_short.endswith(w) for w in wanted):
+                kept.append(tbl)
+        if not kept:
+            console.print(
+                f"[red]No tables in the config match --tables filter '{tables}'.[/red]"
+            )
+            raise typer.Exit(2)
+        cfg.tables = kept
+        console.print(
+            f"[blue]Filtered to {len(kept)} table(s):[/blue] "
+            + ", ".join(t.name for t in kept)
+        )
+
+    total_rows = cfg.get_total_rows()
     if total_rows > 100_000_000 and not yes and not dry_run:
         console.print(
             f"[yellow]Warning: Generating {total_rows:,} rows may consume significant credits.[/yellow]"
@@ -286,7 +376,7 @@ def generate(
     try:
         from sf_synth.engine import SynthEngine
 
-        engine = SynthEngine(backend.session, cfg)
+        engine = SynthEngine(backend.session, cfg, max_parallel_tables=max(1, parallel))
         engine.set_progress_callback(progress_callback)
 
         console.print("\n[bold]Starting synthesis...[/bold]\n")
@@ -294,7 +384,11 @@ def generate(
         if dry_run:
             console.print("[yellow]DRY RUN - no data will be written[/yellow]\n")
 
-        result = engine.generate(dry_run=dry_run)
+        result = engine.generate(
+            dry_run=dry_run,
+            truncate=truncate,
+            capture_samples=5 if report else 0,
+        )
 
         console.print("\n")
 
@@ -311,7 +405,11 @@ def generate(
 
         for tr in result.tables:
             table_name = tr.table_fqn.split(".")[-1]
-            status = "[green]OK[/green]" if tr.success else f"[red]FAIL: {tr.error}[/red]"
+            if tr.success:
+                status = "[green]OK[/green]"
+            else:
+                col_hint = f" (column: {tr.error_column})" if tr.error_column else ""
+                status = f"[red]FAIL{col_hint}: {tr.error}[/red]"
             results_table.add_row(
                 table_name,
                 f"{tr.rows_generated:,}",
@@ -321,13 +419,159 @@ def generate(
 
         console.print(results_table)
 
-        console.print(f"\n[bold]Total:[/bold] {result.total_rows:,} rows in {result.total_elapsed_seconds:.2f}s")
+        console.print(
+            f"\n[bold]Total:[/bold] {result.total_rows:,} rows in "
+            f"{result.total_elapsed_seconds:.2f}s"
+        )
 
         if result.errors:
             console.print("\n[red]Errors:[/red]")
             for err in result.errors:
                 console.print(f"  - {err}")
 
+        if report:
+            from sf_synth.report import build_markdown_report
+
+            md = build_markdown_report(result, backend.session, profile=profile)
+            report.write_text(md)
+            console.print(f"\n[blue]Report written to: {report}[/blue]")
+
+    finally:
+        backend.disconnect()
+
+
+@app.command()
+def preview(
+    config: Path = typer.Argument(..., help="Path to config YAML file"),
+    rows: int = typer.Option(10, "--rows", "-n", help="Rows per table to preview"),
+    connection: Optional[str] = typer.Option(None, "--connection", "-c"),
+    table: Optional[str] = typer.Option(
+        None, "--table", "-t", help="Preview only this table (matches by name suffix)"
+    ),
+    verbose: bool = typer.Option(False, "--verbose", "-v"),
+    quiet: bool = typer.Option(False, "--quiet", "-q"),
+) -> None:
+    """Preview a small sample of generated rows without writing to Snowflake."""
+    _configure_verbosity(verbose, quiet)
+    from sf_synth.config import load_config
+
+    cfg = load_config(config)
+    backend = _get_backend(connection=connection)
+
+    try:
+        from sf_synth.engine import SynthEngine
+
+        engine = SynthEngine(backend.session, cfg)
+        console.print(f"\n[bold]Previewing {rows} rows per table...[/bold]\n")
+        previews = engine.preview(rows=rows)
+
+        for table_fqn, sample in previews.items():
+            short = table_fqn.split(".")[-1]
+            if table and not short.endswith(table) and not table_fqn.endswith(table):
+                continue
+            console.print(Panel(f"[bold cyan]{table_fqn}[/bold cyan]", expand=False))
+            if not sample:
+                console.print("  [dim](no rows generated)[/dim]\n")
+                continue
+            if "_error" in sample[0]:
+                console.print(f"  [red]Error: {sample[0]['_error']}[/red]\n")
+                continue
+            cols = list(sample[0].keys())
+            tbl = Table(show_lines=False)
+            for c in cols:
+                tbl.add_column(c, style="white")
+            for row_data in sample:
+                tbl.add_row(*[_short(row_data.get(c)) for c in cols])
+            console.print(tbl)
+            console.print()
+    finally:
+        backend.disconnect()
+
+
+@app.command()
+def validate(
+    config: Path = typer.Argument(..., help="Path to config YAML file"),
+    connection: Optional[str] = typer.Option(None, "--connection", "-c"),
+    verbose: bool = typer.Option(False, "--verbose", "-v"),
+    quiet: bool = typer.Option(False, "--quiet", "-q"),
+) -> None:
+    """Validate config against the live Snowflake DDL."""
+    _configure_verbosity(verbose, quiet)
+    from sf_synth.config import load_config
+    from sf_synth.validation import validate_config_against_ddl
+
+    cfg = load_config(config)
+    backend = _get_backend(connection=connection)
+
+    try:
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console,
+        ) as progress:
+            progress.add_task("Validating against Snowflake...", total=None)
+            report = validate_config_against_ddl(backend.session, cfg)
+    finally:
+        backend.disconnect()
+
+    if not report.issues:
+        console.print(Panel("[bold green]Config is valid[/bold green]", expand=False))
+        return
+
+    if report.errors:
+        console.print(Panel("[bold red]Validation Errors[/bold red]", expand=False))
+        for issue in report.errors:
+            col = f" / {issue.column}" if issue.column else ""
+            console.print(f"  [red]ERROR[/red] {issue.table}{col}: {issue.message}")
+
+    if report.warnings:
+        console.print(Panel("[bold yellow]Validation Warnings[/bold yellow]", expand=False))
+        for issue in report.warnings:
+            col = f" / {issue.column}" if issue.column else ""
+            console.print(f"  [yellow]WARN[/yellow] {issue.table}{col}: {issue.message}")
+
+    if report.has_errors:
+        raise typer.Exit(1)
+
+
+@app.command()
+def count(
+    config: Path = typer.Argument(..., help="Path to config YAML file"),
+    connection: Optional[str] = typer.Option(
+        None,
+        "--connection",
+        "-c",
+        help="Named connection from ~/.snowflake/connections.toml",
+    ),
+    verbose: bool = typer.Option(False, "--verbose", "-v"),
+    quiet: bool = typer.Option(False, "--quiet", "-q"),
+) -> None:
+    """Print live row counts for every table in the config.
+
+    Useful for verifying append/fill_to/upsert behavior between runs.
+    """
+    _configure_verbosity(verbose, quiet)
+    from sf_synth.config import load_config
+
+    cfg = load_config(config)
+    backend = _get_backend(connection=connection)
+
+    try:
+        results_table = Table(title="Live row counts")
+        results_table.add_column("Table", style="cyan")
+        results_table.add_column("Rows", justify="right")
+        results_table.add_column("Note")
+
+        for tbl in cfg.tables:
+            fqn = tbl.get_fqn(cfg.defaults.database, cfg.defaults.schema_name)
+            try:
+                row = backend.session.sql(f"SELECT COUNT(*) AS C FROM {fqn}").collect()
+                cnt = row[0][0] if row else 0
+                results_table.add_row(fqn, f"{cnt:,}", "")
+            except Exception as e:
+                results_table.add_row(fqn, "-", f"[red]{type(e).__name__}: {e}[/red]")
+
+        console.print(results_table)
     finally:
         backend.disconnect()
 
@@ -352,8 +596,11 @@ def clean(
         "-y",
         help="Skip confirmation",
     ),
+    verbose: bool = typer.Option(False, "--verbose", "-v"),
+    quiet: bool = typer.Option(False, "--quiet", "-q"),
 ) -> None:
     """Clean up temporary tables and optionally generated data."""
+    _configure_verbosity(verbose, quiet)
     from sf_synth.config import load_config
 
     cfg = load_config(config)
@@ -402,6 +649,13 @@ def version() -> None:
     from sf_synth import __version__
 
     console.print(f"sf-synth version [bold]{__version__}[/bold]")
+
+
+def _short(value) -> str:  # noqa: ANN001
+    if value is None:
+        return ""
+    s = str(value)
+    return s if len(s) <= 50 else s[:47] + "..."
 
 
 @app.callback()

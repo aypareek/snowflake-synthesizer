@@ -6,15 +6,16 @@ auto-discovered schema, distribution statistics, Faker-based rules, and a
 DAG-driven referential-integrity engine.
 """
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
-from sf_synth.config import SynthConfig
+from sf_synth.config import SynthConfig, WriteMode
 from sf_synth.discovery import SchemaModel, discover_schema
 from sf_synth.engine import SynthEngine
 
 __all__ = [
     "__version__",
     "SynthConfig",
+    "WriteMode",
     "SchemaModel",
     "discover_schema",
     "SynthEngine",

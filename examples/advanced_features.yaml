@@ -1,0 +1,146 @@
+# Advanced features showcase for sf-synth v0.4.0+
+#
+# Demonstrates:
+#   - correlation_group (city/state/country drawn from one Faker profile)
+#   - temporal ordering (`after` for created_at < updated_at)
+#   - expression generator (computed columns)
+#   - json_template / array / object generators (VARIANT data)
+#   - per-table write_mode + upsert_keys
+defaults:
+  database: ANALYTICS
+  schema: SYNTH
+  seed: 42
+
+tables:
+  - name: USERS
+    rows: 1000
+    write_mode: replace
+    columns:
+      USER_ID:
+        generator: seq
+        start: 1
+        step: 1
+        unique: true
+
+      FIRST_NAME:
+        generator: faker
+        provider: first_name
+
+      LAST_NAME:
+        generator: faker
+        provider: last_name
+
+      # All three address columns share the same Faker profile,
+      # so city/state/country stay semantically consistent.
+      CITY:
+        generator: faker
+        provider: city
+        correlation_group: address
+      STATE:
+        generator: faker
+        provider: state
+        correlation_group: address
+      COUNTRY:
+        generator: faker
+        provider: country
+        correlation_group: address
+
+      # Computed display name
+      FULL_NAME:
+        generator: expression
+        sql: "FIRST_NAME || ' ' || LAST_NAME"
+
+      CREATED_AT:
+        generator: faker
+        provider: date_time
+
+      # Always strictly after CREATED_AT, between 1 and 30 days later.
+      UPDATED_AT:
+        generator: faker
+        provider: date_time
+        after: CREATED_AT
+        after_offset_unit: day
+        after_offset_min: 1
+        after_offset_max: 30
+
+      # Conditional column: SUSPENDED_AT is only filled when STATUS='suspended'
+      STATUS:
+        generator: choice
+        values: [active, inactive, suspended]
+        weights: [0.7, 0.2, 0.1]
+
+      SUSPENDED_AT:
+        generator: faker
+        provider: date_time
+        condition: "STATUS = 'suspended'"
+        else_value: null
+
+      # Semi-structured payload as a VARIANT object.
+      METADATA:
+        generator: object
+        fields:
+          source:
+            generator: choice
+            values: [web, mobile, api]
+          version:
+            generator: uniform
+            min_value: 1
+            max_value: 5
+          score:
+            generator: uniform
+            min_value: 0.0
+            max_value: 1.0
+
+      # Variable-length tag array.
+      TAGS:
+        generator: array
+        element_generator: faker
+        element_provider: word
+        length: [1, 5]
+
+      # Pure JSON template — useful for nested event payloads.
+      EVENT_JSON:
+        generator: json_template
+        template: '{"event":"signup","actor":"{{faker.user_name}}","amount":{{uniform(10,1000)}}}'
+
+  - name: ORDERS
+    rows: 5000
+    write_mode: append
+    columns:
+      ORDER_ID:
+        generator: seq
+        start: 1
+        unique: true
+
+      ORDER_NO:
+        generator: regex
+        pattern: "ORD-[0-9]{8}"
+
+      ORDER_TS:
+        generator: faker
+        provider: date_time
+
+    relationships:
+      - column: USER_ID
+        references: USERS.USER_ID
+        skew: zipf
+        skew_param: 1.5
+
+  # Upsert example: re-running this table will MERGE on USER_ID
+  # instead of duplicating rows.
+  - name: USER_SUMMARY
+    rows: 1000
+    write_mode: upsert
+    upsert_keys: [USER_ID]
+    columns:
+      USER_ID:
+        generator: seq
+        start: 1
+        unique: true
+      LIFETIME_SPEND:
+        generator: uniform
+        min_value: 0
+        max_value: 100000
+      LAST_SEEN:
+        generator: faker
+        provider: date_this_year

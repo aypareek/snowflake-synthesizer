@@ -1,0 +1,147 @@
+# Comprehensive feature test config for sf-synth v0.4.0
+# Exercises every new feature:
+#   - correlation_group (city/state/country)
+#   - temporal ordering (after)
+#   - expression generator
+#   - json_template, array, object
+#   - regex (exrex)
+#   - condition + else_value
+#   - all four write_modes (replace/append/upsert/fill_to)
+#
+# Designed to write into ABC.AYUSH (matches the user's existing test schema).
+defaults:
+  database: ABC
+  schema: AYUSH
+  seed: 42
+
+tables:
+  # Replace mode - fully synthetic users with correlated address columns
+  - name: SF_SYNTH_TEST_USERS
+    rows: 100
+    write_mode: replace
+    upsert_keys: [USER_ID]   # used when --mode upsert is passed at the CLI
+    columns:
+      USER_ID:
+        generator: seq
+        start: 1
+        step: 1
+        unique: true
+
+      FIRST_NAME:
+        generator: faker
+        provider: first_name
+
+      LAST_NAME:
+        generator: faker
+        provider: last_name
+
+      EMAIL:
+        generator: faker
+        provider: email
+        unique: true
+
+      # Computed column (expression generator)
+      FULL_NAME:
+        generator: expression
+        sql: "FIRST_NAME || ' ' || LAST_NAME"
+
+      # All three address columns share a Faker profile (correlation_group)
+      CITY:
+        generator: faker
+        provider: city
+        correlation_group: address
+      STATE:
+        generator: faker
+        provider: state
+        correlation_group: address
+      COUNTRY:
+        generator: faker
+        provider: country
+        correlation_group: address
+
+      STATUS:
+        generator: choice
+        values: [active, inactive, suspended]
+        weights: [0.7, 0.2, 0.1]
+
+      CREATED_AT:
+        generator: faker
+        provider: date_time
+
+      # Temporal ordering — strictly after CREATED_AT
+      UPDATED_AT:
+        generator: faker
+        provider: date_time
+        after: CREATED_AT
+        after_offset_unit: day
+        after_offset_min: 1
+        after_offset_max: 30
+
+      # Conditional - only set when STATUS='suspended'
+      SUSPENDED_AT:
+        generator: faker
+        provider: date_time
+        condition: "STATUS = 'suspended'"
+        else_value: null
+
+      # Order pattern via regex generator
+      ORDER_PATTERN:
+        generator: regex
+        pattern: "ORD-[0-9]{6}"
+
+  # New table to test VARIANT generators
+  - name: SF_SYNTH_TEST_EVENTS
+    rows: 100
+    write_mode: replace
+    columns:
+      EVENT_ID:
+        generator: seq
+        start: 1
+        unique: true
+
+      # OBJECT generator
+      METADATA:
+        generator: object
+        fields:
+          source:
+            generator: choice
+            values: [web, mobile, api]
+          version:
+            generator: uniform
+            min_value: 1
+            max_value: 5
+          score:
+            generator: uniform
+            min_value: 0.0
+            max_value: 1.0
+
+      # ARRAY generator with variable length
+      TAGS:
+        generator: array
+        element_generator: faker
+        element_provider: word
+        length: [1, 5]
+
+      # JSON template
+      PAYLOAD:
+        generator: json_template
+        template: '{"event":"signup","actor":"{{faker.user_name}}","amount":{{uniform(10,1000)}},"id":{{seq}}}'
+
+  # FK to test correctness with new join-based FK
+  - name: SF_SYNTH_TEST_ORDERS
+    rows: 200
+    write_mode: replace
+    columns:
+      ORDER_ID:
+        generator: seq
+        start: 1
+        unique: true
+      AMOUNT:
+        generator: uniform
+        min_value: 0.01
+        max_value: 999.99
+    relationships:
+      - column: USER_ID
+        references: SF_SYNTH_TEST_USERS.USER_ID
+        skew: zipf
+        skew_param: 1.5

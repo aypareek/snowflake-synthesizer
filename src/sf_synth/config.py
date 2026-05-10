@@ -20,6 +20,10 @@ class GeneratorType(str, Enum):
     REGEX = "regex"
     UNIFORM = "uniform"
     SEQ = "seq"
+    EXPRESSION = "expression"
+    JSON_TEMPLATE = "json_template"
+    ARRAY = "array"
+    OBJECT = "object"
 
 
 class SkewType(str, Enum):
@@ -27,6 +31,15 @@ class SkewType(str, Enum):
 
     UNIFORM = "uniform"
     ZIPF = "zipf"
+
+
+class WriteMode(str, Enum):
+    """How to write generated data to existing tables."""
+
+    REPLACE = "replace"
+    APPEND = "append"
+    UPSERT = "upsert"
+    FILL_TO = "fill_to"
 
 
 class ColumnConfig(BaseModel):
@@ -48,6 +61,29 @@ class ColumnConfig(BaseModel):
     unique: bool = False
     null_ratio: float = 0.0
 
+    correlation_group: str | None = None
+
+    after: str | None = None
+    after_offset_unit: Literal["second", "minute", "hour", "day", "month"] = "day"
+    after_offset_min: int = 1
+    after_offset_max: int = 365
+
+    sql: str | None = None
+
+    template: str | None = None
+
+    element_generator: GeneratorType | None = None
+    element_provider: str | None = None
+    element_values: list[Any] | None = None
+    element_min: float | int | None = None
+    element_max: float | int | None = None
+    length: int | list[int] = 1
+
+    fields: dict[str, "ColumnConfig"] | None = None
+
+    condition: str | None = None
+    else_value: Any = None
+
     @field_validator("null_ratio")
     @classmethod
     def validate_null_ratio(cls, v: float) -> float:
@@ -60,6 +96,18 @@ class ColumnConfig(BaseModel):
     def validate_weights(cls, v: list[float] | None) -> list[float] | None:
         if v is not None and any(w < 0 for w in v):
             raise ValueError("weights must be non-negative")
+        return v
+
+    @field_validator("length")
+    @classmethod
+    def validate_length(cls, v: int | list[int]) -> int | list[int]:
+        if isinstance(v, list):
+            if len(v) != 2:
+                raise ValueError("length as list must be [min, max]")
+            if v[0] < 0 or v[1] < v[0]:
+                raise ValueError("length must be [min, max] with 0 <= min <= max")
+        elif v < 0:
+            raise ValueError("length must be >= 0")
         return v
 
     @model_validator(mode="after")
@@ -83,6 +131,18 @@ class ColumnConfig(BaseModel):
         elif g == GeneratorType.RANGE:
             if self.min_value is None or self.max_value is None:
                 raise ValueError("range generator requires 'min_value' and 'max_value'")
+        elif g == GeneratorType.EXPRESSION:
+            if not self.sql:
+                raise ValueError("expression generator requires 'sql' parameter")
+        elif g == GeneratorType.JSON_TEMPLATE:
+            if not self.template:
+                raise ValueError("json_template generator requires 'template' parameter")
+        elif g == GeneratorType.ARRAY:
+            if not self.element_generator:
+                raise ValueError("array generator requires 'element_generator' parameter")
+        elif g == GeneratorType.OBJECT:
+            if not self.fields:
+                raise ValueError("object generator requires 'fields' parameter")
         return self
 
 
@@ -127,6 +187,8 @@ class TableConfig(BaseModel):
     relationships: list[RelationshipConfig] = Field(default_factory=list)
     truncate_before: bool = True
     target_schema: str | None = None
+    write_mode: WriteMode = WriteMode.REPLACE
+    upsert_keys: list[str] = Field(default_factory=list)
 
     @field_validator("name")
     @classmethod
@@ -221,6 +283,15 @@ def load_config(path: str | Path) -> SynthConfig:
 
     if data is None:
         data = {}
+
+    # Strip metadata-only keys (prefixed with _) that discover writes for
+    # human reference but are not part of the config schema.
+    if "tables" in data and isinstance(data["tables"], list):
+        for table in data["tables"]:
+            if isinstance(table, dict):
+                for key in list(table.keys()):
+                    if key.startswith("_"):
+                        del table[key]
 
     return SynthConfig.model_validate(data)
 

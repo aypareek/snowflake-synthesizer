@@ -1,0 +1,210 @@
+defaults:
+  database: ABC
+  seed: 42
+tables:
+- name: ABC.AYUSH.DIM_CUSTOMER
+  rows: 1000
+  columns:
+    CUSTOMER_KEY:
+      generator: seq
+      start: 1
+      step: 1
+      unique: true
+    CUSTOMER_ID:
+      generator: uniform
+      min_value: 1
+      max_value: 10000
+      unique: true
+    FIRST_NAME:
+      generator: faker
+      provider: first_name
+    LAST_NAME:
+      generator: faker
+      provider: last_name
+    EMAIL:
+      generator: faker
+      provider: email
+      unique: true
+    PHONE:
+      generator: faker
+      provider: phone_number
+      null_ratio: 0.05
+    CITY:
+      generator: faker
+      provider: city
+      null_ratio: 0.05
+    STATE:
+      generator: faker
+      provider: state
+      null_ratio: 0.05
+    COUNTRY:
+      generator: faker
+      provider: country
+    SEGMENT:
+      generator: faker
+      provider: word
+      null_ratio: 0.05
+    CREATED_DATE:
+      generator: faker
+      provider: date_time
+      null_ratio: 0.05
+- name: ABC.AYUSH.DIM_DATE
+  rows: 1000
+  columns:
+    DATE_KEY:
+      generator: seq
+      start: 1
+      step: 1
+      unique: true
+    FULL_DATE:
+      generator: faker
+      provider: date
+    DAY_OF_WEEK:
+      generator: faker
+      provider: day_of_week
+    DAY_OF_MONTH:
+      generator: uniform
+      min_value: 0
+      max_value: 10000
+    WEEK_OF_YEAR:
+      generator: uniform
+      min_value: 0
+      max_value: 10000
+    MONTH_NUMBER:
+      generator: uniform
+      min_value: 0
+      max_value: 10000
+    MONTH_NAME:
+      generator: faker
+      provider: month
+    QUARTER:
+      generator: uniform
+      min_value: 0
+      max_value: 10000
+    YEAR:
+      generator: uniform
+      min_value: 0
+      max_value: 10000
+    IS_WEEKEND:
+      generator: choice
+      values: &id001
+      - true
+      - false
+    IS_HOLIDAY:
+      generator: choice
+      values: *id001
+- name: ABC.AYUSH.DIM_PRODUCT
+  rows: 1000
+  columns:
+    PRODUCT_KEY:
+      generator: seq
+      start: 1
+      step: 1
+      unique: true
+    PRODUCT_ID:
+      generator: uniform
+      min_value: 1
+      max_value: 10000
+      unique: true
+    PRODUCT_NAME:
+      generator: faker
+      provider: company
+    CATEGORY:
+      generator: faker
+      provider: word
+    SUBCATEGORY:
+      generator: faker
+      provider: word
+      null_ratio: 0.05
+    BRAND:
+      generator: faker
+      provider: company
+      null_ratio: 0.05
+    UNIT_PRICE:
+      generator: uniform
+      min_value: 0.01
+      max_value: 999.99
+    UNIT_COST:
+      generator: uniform
+      min_value: 0
+      max_value: 10000
+    IS_ACTIVE:
+      generator: choice
+      values: *id001
+- name: ABC.AYUSH.DIM_STORE
+  rows: 1000
+  columns:
+    STORE_KEY:
+      generator: seq
+      start: 1
+      step: 1
+      unique: true
+    STORE_ID:
+      generator: uniform
+      min_value: 1
+      max_value: 10000
+      unique: true
+    STORE_NAME:
+      generator: faker
+      provider: company
+    CITY:
+      generator: faker
+      provider: city
+      null_ratio: 0.05
+    STATE:
+      generator: faker
+      provider: state
+      null_ratio: 0.05
+    COUNTRY:
+      generator: faker
+      provider: country
+    REGION:
+      generator: faker
+      provider: state
+      null_ratio: 0.05
+    STORE_TYPE:
+      generator: faker
+      provider: word
+      null_ratio: 0.05
+    OPEN_DATE:
+      generator: faker
+      provider: date
+      null_ratio: 0.05
+- name: ABC.AYUSH.FACT_SALES
+  rows: 1000
+  columns:
+    SALE_KEY:
+      generator: seq
+      start: 1
+      step: 1
+      unique: true
+    TRANSACTION_ID:
+      generator: uniform
+      min_value: 1
+      max_value: 10000
+      unique: true
+    QUANTITY:
+      generator: uniform
+      min_value: 1
+      max_value: 100
+    UNIT_PRICE:
+      generator: uniform
+      min_value: 0.01
+      max_value: 999.99
+    DISCOUNT_PCT:
+      generator: uniform
+      min_value: 0
+      max_value: 999.99
+    NET_AMOUNT:
+      generator: uniform
+      min_value: 0
+      max_value: 10000
+  relationships:
+  - column: CUSTOMER_KEY
+    references: ABC.AYUSH.DIM_CUSTOMER.CUSTOMER_KEY
+  - column: DATE_KEY
+    references: ABC.AYUSH.DIM_DATE.DATE_KEY
+  - column: PRODUCT_KEY
+    references: ABC.AYUSH.DIM_PRODUCT.PRODUCT_KEY
+  - column: STORE_KEY
+    references: ABC.AYUSH.DIM_STORE.STORE_KEY

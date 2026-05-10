@@ -226,6 +226,7 @@ def _discover_columns(
         IDENTITY_INCREMENT
     FROM "{database}".INFORMATION_SCHEMA.COLUMNS
     WHERE TABLE_SCHEMA NOT IN ('INFORMATION_SCHEMA')
+    AND TABLE_NAME NOT LIKE 'SF\\_SYNTH\\_%'
     {schema_filter}
     {table_filter}
     ORDER BY TABLE_SCHEMA, TABLE_NAME, ORDINAL_POSITION
@@ -411,6 +412,10 @@ def _discover_row_counts(session: Session, model: SchemaModel) -> None:
 def schema_to_yaml(model: SchemaModel, include_columns: bool = True) -> dict:
     """Convert SchemaModel to YAML-friendly dict for config generation.
 
+    Writes discovered columns into the ``columns:`` section with inferred
+    generator configs so the output is immediately usable by ``generate``
+    without any manual editing.
+
     Args:
         model: The schema model to convert.
         include_columns: Whether to include column details.
@@ -418,6 +423,8 @@ def schema_to_yaml(model: SchemaModel, include_columns: bool = True) -> dict:
     Returns:
         Dictionary suitable for YAML serialization.
     """
+    from sf_synth.semantic import suggest_generator_for_column
+
     tables = []
 
     for fqn, table_info in model.tables.items():
@@ -426,16 +433,72 @@ def schema_to_yaml(model: SchemaModel, include_columns: bool = True) -> dict:
             "rows": table_info.row_count or 1000,
         }
 
+        # FK columns are handled via relationships — exclude them from columns
+        fk_cols = {col for fk in table_info.foreign_keys for col in fk.columns}
+        pk_cols = set(table_info.pk_columns)
+
         if include_columns:
-            columns = {}
+            columns: dict = {}
             for col_name, col_info in table_info.columns.items():
-                if col_info.is_supported:
-                    columns[col_name] = {
-                        "type": col_info.data_type,
-                        "nullable": col_info.is_nullable,
-                    }
+                if not col_info.is_supported:
+                    continue
+                if col_name in fk_cols:
+                    continue  # written under relationships below
+
+                is_pk = col_name in pk_cols
+                is_unique = table_info.is_column_unique(col_name)
+
+                gen_config = suggest_generator_for_column(
+                    col_name,
+                    col_info.data_type,
+                    is_nullable=col_info.is_nullable,
+                    is_unique=is_unique,
+                    is_primary_key=is_pk,
+                )
+
+                # Guard: if semantic inference suggested a text generator
+                # (faker) but the column is numeric/boolean/date, fall back
+                # to the data-type default to avoid type-mismatch errors.
+                base_type = col_info.data_type.split("(")[0].upper()
+                _NUMERIC_TYPES = {
+                    "NUMBER", "DECIMAL", "NUMERIC", "INT", "INTEGER",
+                    "BIGINT", "SMALLINT", "TINYINT", "BYTEINT",
+                    "FLOAT", "FLOAT4", "FLOAT8", "DOUBLE", "DOUBLE PRECISION", "REAL",
+                }
+                gen_type = gen_config.get("generator", "")
+                if gen_type == "faker" and base_type in _NUMERIC_TYPES:
+                    from sf_synth.semantic import DATA_TYPE_DEFAULTS
+                    fallback = DATA_TYPE_DEFAULTS.get(base_type)
+                    if fallback:
+                        gen_config = {"generator": fallback[0], **fallback[1]}
+                        if is_unique:
+                            gen_config["unique"] = True
+
+                # Clamp uniform/range min/max to fit NUMBER(p,s) precision
+                if (
+                    gen_config.get("generator") in ("uniform", "range")
+                    and col_info.numeric_precision is not None
+                    and col_info.numeric_scale is not None
+                ):
+                    p, s = col_info.numeric_precision, col_info.numeric_scale
+                    max_abs = 10 ** (p - s) - 10 ** (-s)
+                    if gen_config.get("max_value") is not None:
+                        gen_config["max_value"] = min(gen_config["max_value"], max_abs)
+                    else:
+                        gen_config["max_value"] = max_abs
+                    if gen_config.get("min_value") is not None:
+                        gen_config["min_value"] = max(gen_config["min_value"], -max_abs)
+                    else:
+                        gen_config["min_value"] = 0
+
+                # null_ratio from column nullability
+                if col_info.is_nullable and gen_config.get("generator") != "seq":
+                    gen_config.setdefault("null_ratio", 0.05)
+
+                columns[col_name] = gen_config
+
             if columns:
-                table_dict["_discovered_columns"] = columns
+                table_dict["columns"] = columns
 
         relationships = []
         for fk in table_info.foreign_keys:

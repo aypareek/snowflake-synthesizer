@@ -154,6 +154,21 @@ COLUMN_PATTERNS: list[tuple[re.Pattern[str], SemanticType, str, dict[str, Any]]]
     (re.compile(r"^id$", re.I), SemanticType.ID, "seq", {"start": 1, "step": 1}),
     (re.compile(r"[-_]id$", re.I), SemanticType.FOREIGN_KEY, "uniform", {"min_value": 1, "max_value": 10000}),
     (re.compile(r"^fk[-_]", re.I), SemanticType.FOREIGN_KEY, "uniform", {"min_value": 1, "max_value": 10000}),
+    # Calendar label columns — MUST come before the generic [-_]name$ catch-all
+    (re.compile(r"^day[-_]?of[-_]?week$", re.I), SemanticType.TEXT, "faker", {"provider": "day_of_week"}),
+    (re.compile(r"^month[-_]?name$", re.I), SemanticType.TEXT, "faker", {"provider": "month"}),
+    # Specific name patterns
+    (re.compile(r"^(store|product|item|company|org)[-_]?name$", re.I), SemanticType.COMPANY, "faker", {"provider": "company"}),
+    # Category / type / label columns → short words
+    (re.compile(r"^category$", re.I), SemanticType.TEXT, "faker", {"provider": "word"}),
+    (re.compile(r"^subcategory$", re.I), SemanticType.TEXT, "faker", {"provider": "word"}),
+    (re.compile(r"^brand$", re.I), SemanticType.COMPANY, "faker", {"provider": "company"}),
+    (re.compile(r"^segment$", re.I), SemanticType.TEXT, "faker", {"provider": "word"}),
+    (re.compile(r"[-_]type$", re.I), SemanticType.TEXT, "faker", {"provider": "word"}),
+    (re.compile(r"^type$", re.I), SemanticType.TEXT, "faker", {"provider": "word"}),
+    # Generic catch-all for *_name columns (last, so specific patterns win)
+    (re.compile(r"[-_]name$", re.I), SemanticType.FULL_NAME, "faker", {"provider": "word"}),
+    (re.compile(r"^name$", re.I), SemanticType.FULL_NAME, "faker", {"provider": "name"}),
 ]
 
 DATA_TYPE_DEFAULTS: dict[str, tuple[str, dict[str, Any]]] = {
@@ -172,13 +187,13 @@ DATA_TYPE_DEFAULTS: dict[str, tuple[str, dict[str, Any]]] = {
     "DOUBLE": ("uniform", {"min_value": 0.0, "max_value": 1000.0}),
     "DOUBLE PRECISION": ("uniform", {"min_value": 0.0, "max_value": 1000.0}),
     "REAL": ("uniform", {"min_value": 0.0, "max_value": 1000.0}),
-    "VARCHAR": ("faker", {"provider": "text"}),
-    "CHAR": ("faker", {"provider": "text"}),
-    "CHARACTER": ("faker", {"provider": "text"}),
-    "STRING": ("faker", {"provider": "text"}),
-    "TEXT": ("faker", {"provider": "text"}),
-    "BINARY": ("faker", {"provider": "text"}),
-    "VARBINARY": ("faker", {"provider": "text"}),
+    "VARCHAR": ("faker", {"provider": "word"}),
+    "CHAR": ("faker", {"provider": "word"}),
+    "CHARACTER": ("faker", {"provider": "word"}),
+    "STRING": ("faker", {"provider": "word"}),
+    "TEXT": ("faker", {"provider": "word"}),
+    "BINARY": ("faker", {"provider": "word"}),
+    "VARBINARY": ("faker", {"provider": "word"}),
     "BOOLEAN": ("choice", {"values": [True, False]}),
     "DATE": ("faker", {"provider": "date"}),
     "DATETIME": ("faker", {"provider": "date_time"}),
